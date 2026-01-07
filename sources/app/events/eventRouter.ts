@@ -163,6 +163,10 @@ export type EphemeralEvent = {
     activeAt: number;
     thinking?: boolean;
 } | {
+    type: 'pending-queue';
+    id: string; // session id
+    count: number;
+} | {
     type: 'machine-activity';
     id: string;
     active: boolean;
@@ -488,6 +492,14 @@ export function buildSessionActivityEphemeral(sessionId: string, active: boolean
         active,
         activeAt,
         thinking: thinking || false
+    };
+}
+
+export function buildPendingQueueEphemeral(sessionId: string, count: number): EphemeralPayload {
+    return {
+        type: 'pending-queue',
+        id: sessionId,
+        count,
     };
 }
 

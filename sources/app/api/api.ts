@@ -132,16 +132,16 @@ export async function startApi() {
         if (mountRoot) {
             // Serve UI at root, and redirect legacy /ui/* paths to keep deep links working.
             app.get('/', async (_request, reply) => await sendIndexHtml(reply));
-            app.get('/ui', async (_request, reply) => reply.redirect(302, '/'));
-            app.get('/ui/', async (_request, reply) => reply.redirect(302, '/'));
+            app.get('/ui', async (_request, reply) => reply.redirect('/', 302));
+            app.get('/ui/', async (_request, reply) => reply.redirect('/', 302));
             app.get('/ui/*', async (request, reply) => {
                 const raw = (request.params as { '*': string | undefined })['*'] || '';
                 const decoded = decodeURIComponent(raw).replace(/^\/+/, '');
-                return reply.redirect(302, `/${decoded}`);
+                return reply.redirect(`/${decoded}`, 302);
             });
         } else {
             // Serve UI under a prefix (less reliable with Expo Router exports today).
-            app.get(prefix, async (_request, reply) => reply.redirect(302, `${prefix}/`));
+            app.get(prefix, async (_request, reply) => reply.redirect(`${prefix}/`, 302));
             app.get(`${prefix}/*`, async (request, reply) => {
                 try {
                     const raw = (request.params as { '*': string | undefined })['*'] || '';
