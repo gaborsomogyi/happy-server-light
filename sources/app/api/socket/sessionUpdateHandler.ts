@@ -1,6 +1,6 @@
 import { sessionAliveEventsCounter, websocketEventsCounter } from "@/app/monitoring/metrics2";
 import { activityCache } from "@/app/presence/sessionCache";
-import { buildNewMessageUpdate, buildSessionActivityEphemeral, buildUpdateSessionUpdate, ClientConnection, eventRouter } from "@/app/events/eventRouter";
+import { buildNewMessageUpdate, buildPendingQueueEphemeral, buildSessionActivityEphemeral, buildUpdateSessionUpdate, ClientConnection, eventRouter } from "@/app/events/eventRouter";
 import { db } from "@/storage/db";
 import { allocateSessionSeq, allocateUserSeq } from "@/storage/seq";
 import { AsyncLock } from "@/utils/lock";
@@ -242,6 +242,290 @@ export function sessionUpdateHandler(userId: string, socket: Socket, connection:
                 log({ module: 'websocket', level: 'error' }, `Error in message handler: ${error}`);
             }
         });
+    });
+
+    socket.on('pending-enqueue', async (data: any, callback: (response: any) => void) => {
+        try {
+            websocketEventsCounter.inc({ event_type: 'pending-enqueue' });
+            const { sid, message, localId } = data || {};
+
+            if (!sid || typeof message !== 'string') {
+                callback?.({ ok: false, error: 'Invalid request' });
+                return;
+            }
+
+            const session = await db.session.findUnique({
+                where: { id: sid, accountId: userId }
+            });
+            if (!session) {
+                callback?.({ ok: false, error: 'Session not found' });
+                return;
+            }
+
+            const useLocalId = typeof localId === 'string' ? localId : null;
+
+            const msgContent: PrismaJson.SessionMessageContent = {
+                t: 'encrypted',
+                c: message
+            };
+
+            const result = await db.$transaction(async (tx) => {
+                if (useLocalId) {
+                    const existing = await tx.sessionPendingMessage.findFirst({
+                        where: { sessionId: sid, localId: useLocalId }
+                    });
+                    if (existing) {
+                        const count = await tx.sessionPendingMessage.count({ where: { sessionId: sid } });
+                        return { pending: existing, count };
+                    }
+                }
+
+                const pending = await tx.sessionPendingMessage.create({
+                    data: {
+                        sessionId: sid,
+                        localId: useLocalId,
+                        content: msgContent
+                    }
+                });
+
+                const count = await tx.sessionPendingMessage.count({ where: { sessionId: sid } });
+                return { pending, count };
+            });
+
+            eventRouter.emitEphemeral({
+                userId,
+                payload: buildPendingQueueEphemeral(sid, result.count),
+                recipientFilter: { type: 'all-interested-in-session', sessionId: sid }
+            });
+
+            callback?.({ ok: true, id: result.pending.id });
+        } catch (error) {
+            log({ module: 'websocket', level: 'error' }, `Error in pending-enqueue handler: ${error}`);
+            callback?.({ ok: false, error: 'Internal error' });
+        }
+    });
+
+    socket.on('pending-list', async (data: any, callback: (response: any) => void) => {
+        try {
+            websocketEventsCounter.inc({ event_type: 'pending-list' });
+            const { sid, limit } = data || {};
+
+            if (!sid) {
+                callback?.({ ok: false, error: 'Invalid request' });
+                return;
+            }
+
+            const session = await db.session.findUnique({
+                where: { id: sid, accountId: userId }
+            });
+            if (!session) {
+                callback?.({ ok: false, error: 'Session not found' });
+                return;
+            }
+
+            const take = typeof limit === 'number' ? Math.max(0, Math.min(200, Math.floor(limit))) : 200;
+            const pending = await db.sessionPendingMessage.findMany({
+                where: { sessionId: sid },
+                orderBy: { createdAt: 'asc' },
+                take
+            });
+
+            callback?.({
+                ok: true,
+                messages: pending.map((p) => ({
+                    id: p.id,
+                    localId: p.localId ?? null,
+                    message: typeof (p.content as any)?.c === 'string' ? (p.content as any).c : '',
+                    createdAt: p.createdAt.getTime(),
+                    updatedAt: p.updatedAt.getTime(),
+                }))
+            });
+        } catch (error) {
+            log({ module: 'websocket', level: 'error' }, `Error in pending-list handler: ${error}`);
+            callback?.({ ok: false, error: 'Internal error' });
+        }
+    });
+
+    socket.on('pending-update', async (data: any, callback: (response: any) => void) => {
+        try {
+            websocketEventsCounter.inc({ event_type: 'pending-update' });
+            const { sid, id, message } = data || {};
+
+            if (!sid || !id || typeof message !== 'string') {
+                callback?.({ ok: false, error: 'Invalid request' });
+                return;
+            }
+
+            const session = await db.session.findUnique({
+                where: { id: sid, accountId: userId }
+            });
+            if (!session) {
+                callback?.({ ok: false, error: 'Session not found' });
+                return;
+            }
+
+            const msgContent: PrismaJson.SessionMessageContent = {
+                t: 'encrypted',
+                c: message
+            };
+
+            const { count } = await db.sessionPendingMessage.updateMany({
+                where: { id, sessionId: sid },
+                data: { content: msgContent }
+            });
+
+            if (count === 0) {
+                callback?.({ ok: false, error: 'Pending message not found' });
+                return;
+            }
+
+            const pendingCount = await db.sessionPendingMessage.count({ where: { sessionId: sid } });
+            eventRouter.emitEphemeral({
+                userId,
+                payload: buildPendingQueueEphemeral(sid, pendingCount),
+                recipientFilter: { type: 'all-interested-in-session', sessionId: sid }
+            });
+
+            callback?.({ ok: true });
+        } catch (error) {
+            log({ module: 'websocket', level: 'error' }, `Error in pending-update handler: ${error}`);
+            callback?.({ ok: false, error: 'Internal error' });
+        }
+    });
+
+    socket.on('pending-delete', async (data: any, callback: (response: any) => void) => {
+        try {
+            websocketEventsCounter.inc({ event_type: 'pending-delete' });
+            const { sid, id } = data || {};
+
+            if (!sid || !id) {
+                callback?.({ ok: false, error: 'Invalid request' });
+                return;
+            }
+
+            const session = await db.session.findUnique({
+                where: { id: sid, accountId: userId }
+            });
+            if (!session) {
+                callback?.({ ok: false, error: 'Session not found' });
+                return;
+            }
+
+            await db.sessionPendingMessage.deleteMany({
+                where: { id, sessionId: sid }
+            });
+
+            const pendingCount = await db.sessionPendingMessage.count({ where: { sessionId: sid } });
+            eventRouter.emitEphemeral({
+                userId,
+                payload: buildPendingQueueEphemeral(sid, pendingCount),
+                recipientFilter: { type: 'all-interested-in-session', sessionId: sid }
+            });
+
+            callback?.({ ok: true });
+        } catch (error) {
+            log({ module: 'websocket', level: 'error' }, `Error in pending-delete handler: ${error}`);
+            callback?.({ ok: false, error: 'Internal error' });
+        }
+    });
+
+    socket.on('pending-pop', async (data: any, callback: (response: any) => void) => {
+        try {
+            websocketEventsCounter.inc({ event_type: 'pending-pop' });
+            const { sid } = data || {};
+
+            if (!sid) {
+                callback?.({ ok: false, error: 'Invalid request' });
+                return;
+            }
+
+            // Only allow session-scoped connections for the target session to pop.
+            if (connection.connectionType !== 'session-scoped' || connection.sessionId !== sid) {
+                callback?.({ ok: false, error: 'Forbidden' });
+                return;
+            }
+
+            const result = await db.$transaction(async (tx) => {
+                const session = await tx.session.findUnique({
+                    where: { id: sid, accountId: userId }
+                });
+                if (!session) {
+                    return { kind: 'no-session' as const };
+                }
+
+                const pending = await tx.sessionPendingMessage.findFirst({
+                    where: { sessionId: sid },
+                    orderBy: { createdAt: 'asc' }
+                });
+                if (!pending) {
+                    const count = await tx.sessionPendingMessage.count({ where: { sessionId: sid } });
+                    return { kind: 'empty' as const, count };
+                }
+
+                const accountSeq = await tx.account.update({
+                    where: { id: userId },
+                    select: { seq: true },
+                    data: { seq: { increment: 1 } }
+                });
+
+                const sessionSeq = await tx.session.update({
+                    where: { id: sid },
+                    select: { seq: true },
+                    data: { seq: { increment: 1 } }
+                });
+
+                const msg = await tx.sessionMessage.create({
+                    data: {
+                        sessionId: sid,
+                        seq: sessionSeq.seq,
+                        content: pending.content as any,
+                        localId: pending.localId
+                    }
+                });
+
+                await tx.sessionPendingMessage.delete({ where: { id: pending.id } });
+                const count = await tx.sessionPendingMessage.count({ where: { sessionId: sid } });
+                return {
+                    kind: 'popped' as const,
+                    msg,
+                    updateSeq: accountSeq.seq,
+                    count
+                };
+            });
+
+            if (result.kind === 'no-session') {
+                callback?.({ ok: false, error: 'Session not found' });
+                return;
+            }
+
+            if (result.kind === 'empty') {
+                eventRouter.emitEphemeral({
+                    userId,
+                    payload: buildPendingQueueEphemeral(sid, result.count),
+                    recipientFilter: { type: 'all-interested-in-session', sessionId: sid }
+                });
+                callback?.({ ok: true, popped: false });
+                return;
+            }
+
+            const updatePayload = buildNewMessageUpdate(result.msg, sid, result.updateSeq, randomKeyNaked(12));
+            eventRouter.emitUpdate({
+                userId,
+                payload: updatePayload,
+                recipientFilter: { type: 'all-interested-in-session', sessionId: sid }
+            });
+
+            eventRouter.emitEphemeral({
+                userId,
+                payload: buildPendingQueueEphemeral(sid, result.count),
+                recipientFilter: { type: 'all-interested-in-session', sessionId: sid }
+            });
+
+            callback?.({ ok: true, popped: true });
+        } catch (error) {
+            log({ module: 'websocket', level: 'error' }, `Error in pending-pop handler: ${error}`);
+            callback?.({ ok: false, error: 'Internal error' });
+        }
     });
 
     socket.on('session-end', async (data: {
