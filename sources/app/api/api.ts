@@ -44,7 +44,7 @@ export async function startApi() {
     // for clients that validate the server by fetching the base URL.
     // When UI is mounted at `/`, the HTML includes "Welcome to Happy Server!" so the same validation passes.
 
-    // Optional: serve a prebuilt web UI bundle (happy-local build).
+    // Optional: serve a prebuilt web UI bundle (happy-stacks build).
     const uiDir = process.env.HAPPY_SERVER_LIGHT_UI_DIR?.trim();
     const uiPrefix = process.env.HAPPY_SERVER_LIGHT_UI_PREFIX?.trim()
         ? process.env.HAPPY_SERVER_LIGHT_UI_PREFIX.trim()

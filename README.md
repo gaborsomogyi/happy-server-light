@@ -2,7 +2,18 @@
 
 Lightweight self-hosted backend for Happy, designed for personal use (e.g. over Tailscale).
 
-Use with [Happy Local](https://github.com/leeroybrun/happy-local) to easily setup and run the whole Happy stack locally on your computer and connect to it from anywhere (including mobile) using Tailscale.
+## Fork additions (leeroybrun)
+
+This fork tracks upstream (`slopus/happy-server`) and adds a few features used by **Happy Stacks**:
+
+- **SQLite** instead of Postgres (single local file)
+- **No Redis**
+- **Local file storage** served from the same process under `GET /files/*` (no S3/Minio)
+- **Session messages pagination**: optional `limit` / `beforeSeq`
+- **Pending message queue support**: server-side queue to support “deferred send” UX in the client
+- **Presence hardening**: mark sessions inactive on RPC disconnect
+
+Use with [Happy Stacks](https://github.com/leeroybrun/happy-stacks) to easily setup and run the whole Happy stack locally on your computer and connect to it from anywhere (including mobile) using Tailscale.
 
 ## What this is
 
@@ -11,6 +22,9 @@ Use with [Happy Local](https://github.com/leeroybrun/happy-local) to easily setu
 - **SQLite** instead of Postgres (single local file)
 - **No Redis**
 - **Local file storage** served from the same process under `GET /files/*` (no S3/Minio)
+- **Session messages pagination**: optional `limit` / `beforeSeq`
+- **Pending message queue support**: server-side queue to support “deferred send” UX in the client
+- **Presence hardening**: mark sessions inactive on RPC disconnect
 
 The API surface stays compatible with the Happy mobile app + `happy-cli` (HTTP + Socket.IO at `/v1/updates`).
 
