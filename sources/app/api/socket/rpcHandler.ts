@@ -1,4 +1,5 @@
-import { eventRouter } from "@/app/events/eventRouter";
+import { buildSessionActivityEphemeral, eventRouter } from "@/app/events/eventRouter";
+import { db } from "@/storage/db";
 import { log } from "@/utils/log";
 import { Socket } from "socket.io";
 
@@ -148,7 +149,7 @@ export function rpcHandler(userId: string, socket: Socket, rpcListeners: Map<str
         }
     });
 
-    socket.on('disconnect', () => {
+    socket.on('disconnect', async () => {
 
         const methodsToRemove: string[] = [];
         for (const [method, registeredSocket] of rpcListeners.entries()) {
@@ -160,6 +161,49 @@ export function rpcHandler(userId: string, socket: Socket, rpcListeners: Map<str
         if (methodsToRemove.length > 0) {
             // log({ module: 'websocket-rpc' }, `Cleaning up RPC methods on disconnect for socket ${socket.id}: ${methodsToRemove.join(', ')}`);
             methodsToRemove.forEach(method => rpcListeners.delete(method));
+        }
+
+        // If this disconnect removed any session RPC methods, proactively mark those sessions inactive.
+        // This prevents "ghost online" sessions where the DB still says active=true but the RPC listener is gone.
+        try {
+            const candidateSessionIds = Array.from(new Set(
+                methodsToRemove
+                    .map((method) => method.split(':')[0])
+                    .filter((id) => Boolean(id))
+            ));
+
+            if (candidateSessionIds.length > 0) {
+                const now = Date.now();
+
+                // Only update sessions that actually exist for this user and are currently active.
+                const activeSessions = await db.session.findMany({
+                    where: {
+                        accountId: userId,
+                        id: { in: candidateSessionIds },
+                        active: true,
+                    },
+                    select: { id: true },
+                });
+
+                if (activeSessions.length > 0) {
+                    const sessionIds = activeSessions.map((s) => s.id);
+
+                    await db.session.updateMany({
+                        where: { accountId: userId, id: { in: sessionIds }, active: true },
+                        data: { active: false, lastActiveAt: new Date(now) },
+                    });
+
+                    for (const sessionId of sessionIds) {
+                        eventRouter.emitEphemeral({
+                            userId,
+                            payload: buildSessionActivityEphemeral(sessionId, false, now, false),
+                            recipientFilter: { type: 'user-scoped-only' },
+                        });
+                    }
+                }
+            }
+        } catch (error) {
+            log({ module: 'websocket', level: 'error' }, `Error marking sessions inactive on disconnect: ${error}`);
         }
 
         if (rpcListeners.size === 0) {
