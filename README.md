@@ -2,6 +2,14 @@
 
 Minimal backend for open-source end-to-end encrypted Claude Code clients.
 
+## Fork additions (leeroybrun)
+
+This fork tracks upstream (`slopus/happy-server`) and adds a few features used by **Happy Stacks**:
+
+- **Session messages pagination**: optional `limit` / `beforeSeq` on the session messages endpoint.
+- **Pending message queue support**: server-side queue to support “deferred send” UX in the client.
+- **Presence hardening**: mark sessions inactive on RPC disconnect.
+
 ## What is Happy?
 
 Happy Server is the synchronization backbone for secure Claude Code clients. It enables multiple devices to share encrypted conversations while maintaining complete privacy - the server never sees your messages, only encrypted blobs it cannot read.
