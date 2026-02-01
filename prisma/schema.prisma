@@ -2,8 +2,8 @@
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
 generator client {
-    provider        = "prisma-client-js"
-    previewFeatures = ["metrics"]
+    provider = "prisma-client-js"
+    output   = "../node_modules/.prisma/client"
 }
 
 generator json {
@@ -12,7 +12,6 @@ generator json {
 
 datasource db {
     provider = "sqlite"
-    url      = env("DATABASE_URL")
 }
 
 //
