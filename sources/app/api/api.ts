@@ -21,6 +21,7 @@ import { enableAuthentication } from "./utils/enableAuthentication";
 import { userRoutes } from "./routes/userRoutes";
 import { feedRoutes } from "./routes/feedRoutes";
 import { kvRoutes } from "./routes/kvRoutes";
+import { v3SessionRoutes } from "./routes/v3SessionRoutes";
 import { normalizePublicPath, readPublicFile } from "@/storage/files";
 import { extname, resolve, sep } from "node:path";
 import { readFile, stat } from "node:fs/promises";
@@ -288,8 +289,9 @@ export async function startApi() {
     userRoutes(typed);
     feedRoutes(typed);
     kvRoutes(typed);
+    v3SessionRoutes(typed);
 
-    // Start HTTP 
+    // Start HTTP
     const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3005;
     await app.listen({ port, host: '0.0.0.0' });
     onShutdown('api', async () => {
